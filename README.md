@@ -40,6 +40,7 @@ docker compose ps  # Kiểm tra tất cả services Up
 ```
 
 **Services:**
+
 - Prefect UI: http://localhost:4200
 - Grafana: http://localhost:3000 (admin/admin)
 - Qdrant: http://localhost:6333/dashboard
@@ -318,22 +319,24 @@ Kỳ vọng: Score >80%
 
 ## Scripts
 
-| Script | Mô tả |
-|--------|-------|
-| `scripts/01_ingest_to_kafka.py` | Ingest sample data vào Kafka |
-| `scripts/03_delta_to_feast.py` | Load từ Delta Lake và push features vào Feast (Redis) |
-| `scripts/05_embed_to_qdrant.py` | Embed data và lưu vectors vào Qdrant |
-| `scripts/09_verify_observability.py` | Kiểm tra Prometheus metrics và LangSmith traces |
-| `scripts/production_readiness_check.py` | Production readiness checklist |
+| Script                                    | Mô tả                                                  |
+| ----------------------------------------- | -------------------------------------------------------- |
+| `scripts/01_ingest_to_kafka.py`         | Ingest sample data vào Kafka                            |
+| `scripts/03_delta_to_feast.py`          | Load từ Delta Lake và push features vào Feast (Redis) |
+| `scripts/05_embed_to_qdrant.py`         | Embed data và lưu vectors vào Qdrant                  |
+| `scripts/09_verify_observability.py`    | Kiểm tra Prometheus metrics và LangSmith traces        |
+| `scripts/production_readiness_check.py` | Production readiness checklist                           |
 
 ## API Gateway
 
 **Health Check:**
+
 ```bash
 curl http://localhost:8000/health
 ```
 
 **Chat Endpoint:**
+
 ```bash
 curl -X POST http://localhost:8000/api/v1/chat \
   -H "Content-Type: application/json" \
@@ -352,6 +355,7 @@ curl -X POST http://localhost:8000/api/v1/chat \
 ## Troubleshooting
 
 **Services không start:**
+
 ```bash
 docker compose logs <service_name>
 docker compose down -v
@@ -359,6 +363,7 @@ docker compose up -d
 ```
 
 **Prefect worker không connect:**
+
 ```bash
 # Check Prefect UI: http://localhost:4200
 # Đảm bảo worker đang chạy:
@@ -366,11 +371,38 @@ docker compose logs prefect-worker
 ```
 
 **Kafka consumer lag:**
+
 ```bash
 # Kiểm tra topic
 docker exec lab28-kafka-1 kafka-topics --list --bootstrap-server localhost:9092
 ```
 
 ## Nộp Bài
-
 Xem `SUBMISSION.md` ở thư mục gốc project.
+
+---
+
+## Trả Lời 5 Câu Hỏi Lý Thuyết (Lab #28)
+
+**1. Phân tích các trade-offs trong thiết kế kiến trúc AI platform của bạn. Bạn đã cân bằng giữa performance, reliability, và maintainability như thế nào?**
+- **Performance:** Bằng cách tách riêng phần nặng nhất (LLM Inference và Embedding) chạy trên GPU Kaggle thay vì local, hệ thống đảm bảo thời gian tính toán nhanh nhất có thể. Trade-off là latency đường truyền qua mạng Internet (Cloudflare/Ngrok).
+- **Reliability:** Dùng Kafka làm bộ đệm (Message Queue) giúp hệ thống không bị mất dữ liệu khi lưu lượng tăng đột biến. Dùng Docker giúp môi trường luôn nhất quán và ít lỗi vặt.
+- **Maintainability:** Việc tách rời các module (Decoupling) bằng Microservices (vLLM, Prefect, FastAPI) giúp dễ dàng cập nhật/bảo trì từng phần riêng biệt mà không làm sập toàn bộ hệ thống.
+
+**2. Trong kiến trúc hybrid (Local + Kaggle), bạn xử lý ngắt kết nối giữa local và Kaggle như thế nào? Có cơ chế fallback không?**
+- Do đặc thù Kaggle session bị giới hạn thời gian (12 tiếng) hoặc dễ bị ngắt kết nối (Idle), các liên kết Ngrok/Cloudflare sẽ chết.
+- **Xử lý:** Mọi thao tác kết nối tới Kaggle (FastAPI gọi LLM/Embedding) đều được cấu hình timeout để tránh treo hệ thống (`timeout=30` trong `httpx`).
+- **Cơ chế Fallback:** Khi API request bị thất bại do timeout hoặc ngắt kết nối, API Gateway sẽ bắt lỗi thông qua Try/Catch hoặc trả về HTTP Status code rõ ràng thay vì crash server, đồng thời cảnh báo (Alert) để người vận hành cập nhật lại biến môi trường URL.
+
+**3. Giải thích cách event-driven architecture với Kafka giúp decouple các components trong AI platform của bạn.**
+- Nếu không có Kafka, hệ thống nguồn (Ví dụ: Web app) phải gọi API trực tiếp tới luồng xử lý Data (Prefect/Delta Lake), tạo ra điểm nghẽn cổ chai (Bottleneck) khi dữ liệu quá tải.
+- Nhờ Kafka, hệ thống nguồn chỉ cần quăng dữ liệu vào Topic (`data.raw`) và lập tức trả về phản hồi "Thành công" cho người dùng. Phía sau, luồng Prefect (Consumer) có thể từ từ hút dữ liệu theo lịch trình (`schedule`) và lưu vào Delta Lake mà không phụ thuộc lẫn nhau. Hai hệ thống hoạt động hoàn toàn độc lập (Decoupled).
+
+**4. Bạn đã implement observability như thế nào? Logs, metrics, và traces được thu thập và visualized ra sao?**
+- **Metrics:** Sử dụng thư viện `prometheus-fastapi-instrumentator` để tự động thu thập các chỉ số về HTTP requests (thời gian phản hồi, số lượng request, mã lỗi...) của API Gateway. Prometheus sẽ cào (scrape) các thông số này mỗi 15s.
+- **Visualization:** Các metrics từ Prometheus được đổ lên Grafana (cổng 3000) để vẽ biểu đồ Dashboard trực quan.
+- **Traces:** Sử dụng nền tảng LangSmith để trace toàn bộ hành trình của dòng dữ liệu từ lúc User nhập câu hỏi (Prompt) cho tới lúc LLM trên Kaggle trả về kết quả, giúp dễ dàng debug.
+
+**5. Nếu một service trong stack (ví dụ: Qdrant hoặc Kafka) bị crash, hệ thống của bạn sẽ xử lý như thế nào? Có graceful degradation không?**
+- Nếu service bị crash, Docker Compose đã được cấu hình với cơ chế tự khởi động lại hoặc ta có thể phục hồi nó dễ dàng do dữ liệu được lưu trữ thông qua persistent volumes (ví dụ: `qdrant_data`).
+- **Graceful degradation (Xuống cấp ôn hòa):** Tại API Gateway, nếu gọi tới Qdrant (Vector Database) thất bại, ứng dụng vẫn có thể chặn lỗi và trả về câu trả lời mặc định từ LLM (không có context) thay vì crash toàn bộ hệ thống API. Tương tự, nếu Kafka sập, dữ liệu chưa kịp gửi sẽ được nhà phát hành (Producer) retry hoặc lưu tạm vào log thay vì báo lỗi trực tiếp cho end-user.
